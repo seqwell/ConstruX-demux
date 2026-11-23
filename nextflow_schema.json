@@ -30,6 +30,18 @@
                 "pool_ID": {
                     "description": "Unique identifier for the sequencing run. Used in the demux summary report filename.",
                     "type": "string"
+                },
+                "check_inputs": {
+                    "type": "boolean",
+                    "default": false,
+                    "fa_icon": "fas fa-check",
+                    "description": "Read the first and last input file end to end before Dorado starts, and stop with a clear message if either is corrupt, truncated or empty. Off by default. A single file that is split is always checked by the split step."
+                },
+                "check_all_inputs": {
+                    "type": "boolean",
+                    "default": false,
+                    "fa_icon": "fas fa-check-double",
+                    "description": "Read every input file end to end before Dorado starts and list any that are corrupt, truncated or empty. Off by default; suggested when a run fails while reading input files. Implies --check_inputs."
                 }
             },
             "required": [
@@ -74,8 +86,8 @@
                     "minimum": 50
                 },
                 "error_rate": {
-                    "description": "Error rate threshold used by CUTADAPT_TRIM to filter reads with residual ME adapter sequence.",
-                    "default": 0.12,
+                    "description": "Maximum error rate for detecting the ME and P5 adapters in CUTADAPT_TRIM step 2; reads containing either (either orientation, anywhere) are set aside as ME/P5-tagged. Errors allowed = floor(error_rate x matched adapter length): with 0.106, 2 in the 19-nt ME and 3 in the 29-nt P5.",
+                    "default": 0.106,
                     "type": "number",
                     "minimum": 0,
                     "maximum": 1

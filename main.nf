@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 
-include { SPLIT_FASTQ          } from './modules/split_input.nf'
-include { SPLIT_BAM            } from './modules/split_input.nf'
+include { CHECK_INPUTS         } from './subworkflows/check_inputs.nf'
+include { sampleIdOf; asList; asBool } from './functions/input_checks.nf'
 include { DORADO_DEMUX         } from './modules/dorado_demux.nf'
 include { COMBINE_BARCODES     } from './modules/combine_barcodes.nf'
 include { COMBINE_BARCODES_BAM } from './modules/combine_barcodes.nf'
@@ -18,81 +18,156 @@ include { NANOSTAT_BASES       } from './modules/nanostat_bases.nf'
 include { MERGE_DEMUX_BASES    } from './modules/merge_demux_bases.nf'
 
 
-// Strip .bam / .fastq / .fq / .fastq.gz / .fq.gz to get the sample (or chunk) ID
-def sampleIdOf(f) {
-    return f.name.replaceAll(/\.(bam|fastq|fq)(\.gz)?$/, '')
-}
-
-// Normalise a process output that may be a single path or a list of paths
-def asList(x) {
-    return (x instanceof List) ? x : [x]
-}
-
+// Helper functions (sampleIdOf, asList, input checks): functions/input_checks.nf
 
 workflow {
 
-    main:
+    def wf = workflow
+    def p  = params
+    def lg = log
+    def nf_version = nextflow.version
+    
+    def all_checked = asBool(params.check_all_inputs, 'check_all_inputs')
+    wf.onComplete {
 
-    // ---------------------------------------------------------------
-    // Validate data_type param
-    // ---------------------------------------------------------------
-    if (!params.data_type) {
-        error "Please specify --data_type [bam|fastq]"
-    }
-    if (!['bam', 'fastq'].contains(params.data_type)) {
-        error "Invalid --data_type '${params.data_type}'. Must be 'bam' or 'fastq'."
-    }
+        def ok         = wf.success
+        def stats      = wf.stats
+        def bar        = '=' * 72
+        def outdir     = p.outdir ? file(p.outdir).toUriString() : "${wf.launchDir}/results"
+        def cmd        = wf.commandLine
+        def resume_cmd = cmd.contains('-resume') ? cmd : "${cmd} -resume"
 
-    def use_bam = (params.data_type == 'bam')
+        def summary = [
+            '',
+            bar,
+            "  seqWell ONT Dorado Demux  —  ${ok ? 'COMPLETED SUCCESSFULLY ✅' : 'FAILED ❌'}",
+            bar,
+            "  Run name        : ${wf.runName}",
+            "  Session ID      : ${wf.sessionId}",
+            "  Pipeline rev    : ${wf.revision ?: wf.commitId ?: 'local / no git'}",
+            "  Nextflow        : ${nf_version}",
+            "  Profile         : ${wf.profile}",
+            "  Container       : ${wf.containerEngine ?: 'none'}",
+            '',
+            "  Started         : ${wf.start}",
+            "  Finished        : ${wf.complete}",
+            "  Wall time       : ${wf.duration}",
+            "  CPU time        : ${stats.computeTimeFmt}",
+            '',
+            "  Tasks           : ${stats.succeededCount} succeeded, ${stats.cachedCount} cached, " +
+                "${stats.failedCount} failed, ${stats.ignoredCount} ignored",
+            '',
+            "  Input settings",
+            "    data_type     : ${p.data_type}",
+            "    input         : ${p.input}",
+            "    split_n       : ${p.split_n}",
+            "    barcodes      : ${p.barcodes}",
+            "    arrangement   : ${p.arrangement_toml}",
+            '',
+            "  Output dir      : ${outdir}",
+            "  Work dir        : ${wf.workDir}",
+            "  Launch dir      : ${wf.launchDir}",
+            '',
+            "  Command line    :",
+            "    ${cmd}",
+        ]
 
-    // ---------------------------------------------------------------
-    // Resolve input files eagerly so we know how many there are
-    //   fastq: accepts .fastq, .fq, .fastq.gz, .fq.gz
-    // ---------------------------------------------------------------
-    def pattern = use_bam
-        ? "${params.input}/*.bam"
-        : "${params.input}/*.{fastq,fq,fastq.gz,fq.gz}"
+        // Our own input/output checks already printed a complete message;
+        // do not repeat it (three times) in the summary
+        def own_check_error = (wf.errorMessage ?: '').contains(' problem:')
 
-    def input_files = files(pattern)
-    if (input_files.isEmpty()) {
-        error "No input files found matching: ${pattern}"
-    }
-
-    def n_parts  = params.split_n as Integer
-    def do_split = (input_files.size() == 1 && n_parts > 1)
-
-    if (use_bam) {
-        log.info "data_type=bam  →  BAM input: dorado demux (BAM) → BAM-to-FASTQ → cutadapt → filter demux-BAM by cutadapt-FASTQ read IDs"
-    } else {
-        log.info "data_type=fastq  →  FASTQ input (.fastq or .fastq.gz): extract headers → dorado demux → reheader → cutadapt → FASTQ output only (no BAM created)"
-    }
-    log.info "Found ${input_files.size()} input file(s)" +
-             (do_split ? " → single input, splitting into ${n_parts} chunks for dorado" : " → no splitting")
-
-    def raw_ch = channel.fromList(input_files)
-                   .map { f -> tuple(sampleIdOf(f), f) }
-
-
-    // ---------------------------------------------------------------
-    // Step 0: If only ONE input file, split into n_parts chunks
-    //   Each chunk becomes its own dorado job; COMBINE_BARCODES(_BAM)
-    //   already merges multiple demux dirs back into per-barcode files.
-    //   Chunk IDs look like "<sample>.part_001".
-    // ---------------------------------------------------------------
-    def input_ch = raw_ch
-    if (do_split) {
-        def chunk_out = channel.empty()
-        if (use_bam) {
-            SPLIT_BAM(raw_ch, n_parts)
-            chunk_out = SPLIT_BAM.out.chunks
-        } else {
-            SPLIT_FASTQ(raw_ch, n_parts)
-            chunk_out = SPLIT_FASTQ.out.chunks
+        if (!ok && own_check_error) {
+            summary = summary + [
+                '',
+                '  Error           : stopped by an input/output check - see the "problem:" message printed with this run',
+            ]
+        } else if (!ok) {
+            def report_lines = wf.errorReport
+                ? wf.errorReport.readLines().take(15).collect { l -> "    ${l}" }
+                : []
+            def error_lines = wf.errorMessage
+                ? ["  Error           : ${wf.errorMessage}"]
+                : []
+            summary = summary + [''] + error_lines + [
+                "  Error report    :",
+            ] + report_lines + [
+                '',
+                "  To resume from the last successful step:",
+                "    ${resume_cmd}",
+            ] + (all_checked ? [] : [
+                '',
+                "  Tip             : if a step failed while reading an input file, some input",
+                "                    files may be corrupt or incomplete. Rerun with --check_all_inputs",
+                "                    to read every input file first and list any bad ones.",
+            ])
         }
-        input_ch = chunk_out
-                     .flatMap { _id, chunks -> asList(chunks) }
-                     .map { c -> tuple(sampleIdOf(c), c) }
+
+        // Where the debug files are saved (see "Run reports" in nextflow.config)
+        def info_dir = "${p.outdir ?: wf.launchDir}/pipeline_info"
+        summary = summary + [
+            '',
+            "  Logs & reports  : ${info_dir}/",
+            "                    nextflow.log, run_summary.txt, execution_report.html (CPU/RAM per step),",
+            "                    execution_trace.txt, execution_timeline.html" + (ok ? '' : ', error_report.txt'),
+            bar, ''
+        ]
+
+        // Printed at info level even for a failed run: if the summary were
+        // logged as an error, Nextflow 26 would skip printing the error
+        // message itself for problems found at start-up.
+        lg.info summary.join('\n')
+
+        // ---------------------------------------------------------------
+        // Save debug files next to the results, so a customer can send one
+        // folder (pipeline_info/) when asking for help. Never let a problem
+        // here hide the real result of the run.
+        // ---------------------------------------------------------------
+        try {
+            def info = file(info_dir)
+            info.mkdirs()
+
+            // the summary above, as plain text
+            info.resolve('run_summary.txt').text = summary.join('\n') + '\n'
+
+            // full error report (all lines, not just the first 15 shown above)
+            if (!ok) {
+                info.resolve('error_report.txt').text = [
+                    "Error message:",
+                    wf.errorMessage ?: '(none)',
+                    '',
+                    "Error report:",
+                    wf.errorReport ?: '(none)',
+                    ''
+                ].join('\n')
+            }
+
+            // copy of the Nextflow log (the default .nextflow.log in the launch
+            // directory; skipped if the run used a custom -log path)
+            def nflog = file("${wf.launchDir}/.nextflow.log")
+            if (nflog.exists()) {
+                nflog.copyTo(info.resolve('nextflow.log'))
+            }
+        } catch (Exception e) {
+            lg.warn "Could not save debug files to ${info_dir}: ${e.message}"
+        }
     }
+
+
+    // ---------------------------------------------------------------
+    // Step 0: Check inputs and outdir, split a single large file
+    //   (subworkflows/check_inputs.nf). Emits tuple(sample_id, file)
+    //   only after every check has passed.
+    // ---------------------------------------------------------------
+    CHECK_INPUTS(
+        params.input,
+        params.data_type,
+        params.outdir,
+        params.split_n,
+        params.check_inputs,
+        params.check_all_inputs
+    )
+    def input_ch = CHECK_INPUTS.out
+    def use_bam  = (params.data_type == 'bam')
 
     def barcode_fasta    = file(params.barcodes)
     def arrangement_toml = file(params.arrangement_toml)
@@ -212,6 +287,16 @@ workflow {
     // ---------------------------------------------------------------
     DEMUX_SUMMARIZE(trimmed_fq_ch.collect())
 
+    // Warn (do not fail) when the overall demux rate looks wrong
+    DEMUX_SUMMARIZE.out.subscribe { csv ->
+        def line = csv.readLines().find { l -> l.startsWith('Total Demuxed Reads:') }
+        def pct  = line ? (line.split(',')[2].replace('%', '').trim() as Double) : 0.0
+        if (pct < 50) {
+            log.warn "Only ${pct}% of reads were assigned to a barcode (see ${csv.name}). " +
+                     'Check that these are seqWell libraries and that the barcode set is correct.'
+        }
+    }
+
     def valid_ids_ch = DEMUX_SUMMARIZE.out
                          .splitCsv()
                          .filter { row -> row[0].startsWith('barcode') || row[0] == 'unknown' }
@@ -238,71 +323,4 @@ workflow {
     // ===============================================================
     //  Completion summary — runs on success AND failure
     // ===============================================================
-    onComplete:
-
-    def ok         = workflow.success
-    def stats      = workflow.stats
-    def bar        = '=' * 72
-    def outdir     = params.outdir ? file(params.outdir).toUriString() : "${workflow.launchDir}/results"
-    def cmd        = workflow.commandLine
-    def resume_cmd = cmd.contains('-resume') ? cmd : "${cmd} -resume"
-
-    def summary = [
-        '',
-        bar,
-        "  seqWell ONT Dorado Demux  —  ${ok ? 'COMPLETED SUCCESSFULLY ✅' : 'FAILED ❌'}",
-        bar,
-        "  Run name        : ${workflow.runName}",
-        "  Session ID      : ${workflow.sessionId}",
-        "  Pipeline rev    : ${workflow.revision ?: workflow.commitId ?: 'local / no git'}",
-        "  Nextflow        : ${nextflow.version}",
-        "  Profile         : ${workflow.profile}",
-        "  Container       : ${workflow.containerEngine ?: 'none'}",
-        '',
-        "  Started         : ${workflow.start}",
-        "  Finished        : ${workflow.complete}",
-        "  Wall time       : ${workflow.duration}",
-        "  CPU time        : ${stats.computeTimeFmt}",
-        '',
-        "  Tasks           : ${stats.succeededCount} succeeded, ${stats.cachedCount} cached, " +
-            "${stats.failedCount} failed, ${stats.ignoredCount} ignored",
-        '',
-        "  Input settings",
-        "    data_type     : ${params.data_type}",
-        "    input         : ${params.input}",
-        "    split_n       : ${params.split_n}",
-        "    barcodes      : ${params.barcodes}",
-        "    arrangement   : ${params.arrangement_toml}",
-        '',
-        "  Output dir      : ${outdir}",
-        "  Work dir        : ${workflow.workDir}",
-        "  Launch dir      : ${workflow.launchDir}",
-        '',
-        "  Command line    :",
-        "    ${cmd}",
-    ]
-
-    if (!ok) {
-        def report_lines = workflow.errorReport
-            ? workflow.errorReport.readLines().take(15).collect { l -> "    ${l}" }
-            : []
-        def error_lines = workflow.errorMessage
-            ? ["  Error           : ${workflow.errorMessage}"]
-            : []
-        summary = summary + [''] + error_lines + [
-            "  Error report    :",
-        ] + report_lines + [
-            '',
-            "  To resume from the last successful step:",
-            "    ${resume_cmd}",
-        ]
-    }
-
-    summary = summary + [bar, '']
-
-    if (ok) {
-        log.info summary.join('\n')
-    } else {
-        log.error summary.join('\n')
-    }
 }

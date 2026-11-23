@@ -6,7 +6,7 @@ pool_id=${1:?Missing pool_id}
 error_rate=${2:?Missing error_rate}
 summary_file="${pool_id}_demux_report.csv"
 
-declare -A barcode_counts
+declare -A barcode_counts=()
 total_reads=0
 unknown_reads=0
 unclassified_me_tagged_reads=0
@@ -47,7 +47,7 @@ fi
 
 threshold=$((avg_reads / 10))
 
-declare -A final_barcode_counts
+declare -A final_barcode_counts=()
 for barcode in "${!barcode_counts[@]}"; do
     count=${barcode_counts[$barcode]}
     if (( count < threshold )); then
@@ -72,9 +72,9 @@ other_barcodes_pct=$(awk -v o="$other_barcodes_reads" -v t="$total_reads" 'BEGIN
 {
     echo "Total Reads:,${total_reads}"
     echo "Total Demuxed Reads:,${regular_barcoded_reads},${regular_barcoded_pct}%"
-    echo "ME-tagged Reads (demuxed reads: removed):,${me_tagged_reads},${me_tagged_pct}%"
-    echo "Unclassified Reads No ME-tagged:,${unknown_reads},${unknown_pct}%"
-    echo "Unclassified ME-tagged Reads:,${unclassified_me_tagged_reads},${unclassified_me_pct}%"
+    echo "ME/P5-tagged Reads (demuxed reads: removed):,${me_tagged_reads},${me_tagged_pct}%"
+    echo "Unclassified Reads without ME/P5:,${unknown_reads},${unknown_pct}%"
+    echo "Unclassified ME/P5-tagged Reads:,${unclassified_me_tagged_reads},${unclassified_me_pct}%"
     echo "Other Barcodes (count < 10% of avg):,${other_barcodes_reads},${other_barcodes_pct}%"
     echo ""
     echo ""

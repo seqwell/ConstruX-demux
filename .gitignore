@@ -27,6 +27,8 @@ temp
 
 dockers/
 
+README.full.md
+
 new/
 old/
 
@@ -41,3 +43,21 @@ assets/dorado_demux_flow.mmd
 single_bam_test_output/
 single_fastq_test_output/
 assets/dorado_ont_workflow_old.png
+error_tests/
+
+
+temp
+
+test_data/fastq_pass_1/
+README_full.md
+
+
+README.html
+*_out/
+
+notes/
+
+test_data/fastq_pass_0928/
+test_data/fastq_pass_1008/
+test_data/fastq_pass_1021/
+pipeline_info/

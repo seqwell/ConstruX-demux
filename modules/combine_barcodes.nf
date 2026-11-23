@@ -1,3 +1,15 @@
+/*
+ * COMBINE_BARCODES / COMBINE_BARCODES_BAM
+ *
+ * Merge the per-input dorado demux directories into one file per barcode.
+ * bin/combine_demux.sh searches each directory recursively, so it handles
+ * both the flat layout of dorado 1.1.x and the nested ONT Output
+ * Specifications (26.01) layout written by dorado >= 1.3.1 / 2.x,
+ * and both plain and gzipped FASTQ.
+ *
+ * Output names are unchanged: barcode001.fastq.gz ... / unclassified.fastq.gz
+ * (or .bam + .bai for the BAM branch).
+ */
 process COMBINE_BARCODES {
     tag "combine_barcodes"
 
@@ -11,29 +23,10 @@ process COMBINE_BARCODES {
 
     script:
     """
-    #!/bin/bash
-    set -euo pipefail
-    shopt -s nullglob
-    mkdir -p output_fastq
-
-    dirs=( *_Demux_fastq )
-    (( \${#dirs[@]} )) || { echo "No Demux_fastq directories found" >&2; exit 1; }
-
-    for i in \$(seq -w 001 384); do
-        files=()
-        for d in "\${dirs[@]}"; do
-            for f in "\$d"/*_sw_barcode\${i}.fastq; do files+=("\$f"); done
-        done
-        if (( \${#files[@]} )); then
-            cat "\${files[@]}" | gzip > "output_fastq/barcode\${i}.fastq.gz"
-        fi
-    done
-
-    files=()
-    for d in "\${dirs[@]}"; do
-        for f in "\$d"/*_unclassified.fastq; do files+=("\$f"); done
-    done
-    (( \${#files[@]} )) && cat "\${files[@]}" | gzip > "output_fastq/unclassified.fastq.gz" || true
+    combine_demux.sh \\
+        --mode fastq \\
+        --pattern '*_Demux_fastq' \\
+        --outdir output_fastq
     """
 }
 
@@ -46,35 +39,11 @@ process COMBINE_BARCODES_BAM {
     output:
     path("output_bam/*"), emit: bam
 
-
     script:
     """
-    #!/bin/bash
-    set -euo pipefail
-    shopt -s nullglob
-    mkdir -p output_bam
-
-    dirs=( *_Demux_bam )
-    (( \${#dirs[@]} )) || { echo "No Demux_bam directories found" >&2; exit 1; }
-
-    for i in \$(seq -w 001 384); do
-        files=()
-        for d in "\${dirs[@]}"; do
-            for f in "\$d"/*_sw_barcode\${i}.bam; do files+=("\$f"); done
-        done
-        if (( \${#files[@]} )); then
-            samtools merge -f "output_bam/barcode\${i}.bam" "\${files[@]}"
-            samtools index "output_bam/barcode\${i}.bam"
-        fi
-    done
-
-    files=()
-    for d in "\${dirs[@]}"; do
-        for f in "\$d"/*_unclassified.bam; do files+=("\$f"); done
-    done
-    if (( \${#files[@]} )); then
-        samtools merge -f "output_bam/unclassified.bam" "\${files[@]}"
-        samtools index "output_bam/unclassified.bam"
-    fi
+    combine_demux.sh \\
+        --mode bam \\
+        --pattern '*_Demux_bam' \\
+        --outdir output_bam
     """
 }
