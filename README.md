@@ -5,7 +5,7 @@ output:
 ---
 # ConstruX-demux
 
-seqWell ONT Dorado demultiplexing pipeline.
+Demultiplexing pipeline for seqWell ConstruX ONT libraries (plasmid and amplicon).
 
 
 [![Nextflow Workflow Tests](https://github.com/seqwell/ConstruX-demux/actions/workflows/nextflow-ci.yml/badge.svg?branch=main)](https://github.com/seqwell/ConstruX-demux/actions/workflows/nextflow-ci.yml?query=branch%3Amain)
@@ -13,11 +13,17 @@ seqWell ONT Dorado demultiplexing pipeline.
 
 
 
-This Nextflow pipeline demultiplexes 384-well Oxford Nanopore Technologies (ONT) data generated with the seqWell kit using Dorado. It accepts either **BAM** or **FASTQ** input (gzipped or uncompressed) and follows a branching processing strategy depending on input type, producing cleaned **FASTQ** output files (and filtered **BAM** output for BAM input) with QC reports.
+## Intended Use
+
+ConstruX-demux demultiplexes Oxford Nanopore data from seqWell **ConstruX** libraries of **plasmids and amplicons**, barcoded with the seqWell 384 barcode set. It starts from basecalled ONT reads in FASTQ or unaligned BAM format, typically MinKNOW's `fastq_pass` / `bam_pass` folders, or the output of Dorado basecalling run separately. It has been tested with MinKNOW output. It delivers clean per-barcode reads for downstream analysis such as plasmid assembly or amplicon checks.
+
+## Summary
+
+This Nextflow pipeline demultiplexes ONT data generated with seqWell ConstruX library preparation using Dorado. It accepts either **BAM** or **FASTQ** input (gzipped or uncompressed) and follows a branching processing strategy depending on input type, producing cleaned **FASTQ** output files (and filtered **BAM** output for BAM input) with QC reports.
 
 Barcodes are identified from the left (5′) end of each read, using the seqWell 384 barcode set (see [Barcodes](#barcodes)).
 
-Before any demultiplexing, the pipeline checks the inputs and stops with a plain-language message if something is wrong (missing or empty folder, wrong `--data_type`, corrupt or truncated files, unwritable output folder). When the input is a **single file**, the pipeline can optionally split it into chunks and run Dorado on each chunk in parallel (see [`--split_n`](#--split_n)).
+Before demultiplexing, the pipeline checks the input paths, file names, options and output folder, and stops with a plain-language message if something is wrong. Reading the files themselves for corruption is optional ([`--check_inputs`](#--check_inputs), [`--check_all_inputs`](#--check_all_inputs)), except for a single file that is split, which is always checked. When the input is a **single file**, the pipeline can optionally split it into chunks and run Dorado on each chunk in parallel (see [`--split_n`](#--split_n)).
 
 ## Pipeline Overview
 
@@ -81,6 +87,8 @@ Every run starts with the `CHECK_INPUTS` subworkflow, then splits into two branc
                         └─────────────────────────────────────────────┘
 ```
 
+Validated on E. coli amplicon pools (96- to 384-plex): crosstalk 0.04–0.18% after demultiplexing.
+
 ### Input Checks and Optional Split (both branches)
 
 These steps run in the `CHECK_INPUTS` subworkflow (`subworkflows/check_inputs.nf`); demultiplexing starts only after they pass.
@@ -114,7 +122,7 @@ For a large single file with `--split_n 1`, the check reads the whole file befor
 
 4. **CUTADAPT_TRIM**: Two-step adapter trimming on the converted FASTQ:
    - Step 1: Drops reads shorter than [`--length_filter`](#--length_filter). (Dorado has already trimmed the barcode and its flanking adapter sequences.)
-   - Step 2: Sets aside any read that still contains a seqWell adapter, ME (Mosaic End, `AGATGTGTATAAGAGACAG`) or P5 (`AATGATACGGCGACCACCGAGATCTACAC`), in either orientation and anywhere in the read, allowing errors up to [`--error_rate`](#--error_rate). These ME/P5-tagged reads are written to `.ME.tagged.fastq.gz` (removed from final output); clean reads go to `.seqWell.fastq.gz`. Most ME/P5-tagged reads are chimeras (two library molecules joined together), and removing them substantially reduces crosstalk between samples.
+   - Step 2: Sets aside any read that still contains a seqWell adapter, ME (Mosaic End, `AGATGTGTATAAGAGACAG`) or P5 (`AATGATACGGCGACCACCGAGATCTACAC`), in either orientation and anywhere in the read, allowing errors up to [`--error_rate`](#--error_rate). These ME/P5-tagged reads are written to `.ME.tagged.fastq.gz` (removed from final output); clean reads go to `.seqWell.fastq.gz`. Most ME/P5-tagged reads are chimeras (two library molecules joined together). In pooled plasmid and amplicon libraries, a chimera would otherwise place one sample's sequence under another sample's barcode; setting these reads aside removes this source of crosstalk.
 
 5. **FILTER_BAM_BY_FASTQ**: Subsets the demux BAM to retain only reads whose names appear in the trimmed FASTQ. This propagates cutadapt adapter/length/ME-tag filtering back onto the BAM. Keys are matched on bare barcode ID (e.g. `barcode001`).
 
@@ -134,7 +142,7 @@ For a large single file with `--split_n 1`, the check reads the whole file befor
 
 6. **DEMUX_SUMMARIZE**: Generates a per-barcode read count summary CSV from the trimmed FASTQs. Only barcodes listed in this report (`barcode*` or `unknown`) go on to the QC steps below. If fewer than 50% of reads are assigned to a barcode, the run still completes but prints a warning to check the library type and barcode set.
 
-7. **READ_LENGTH**: Counts reads per length in one pass and plots the read length distribution (and a length-weighted version) per barcode.
+7. **READ_LENGTH**: Counts reads per length in one pass and plots the read length distribution (and a length-weighted version) per barcode. For plasmids, the read-length plot normally shows a sharp peak at the full plasmid length; for amplicons, the distribution is broader. The length-weighted plot shows which read lengths contribute most of the bases, making barcodes easy to compare.
 
 8. **NANOSTAT**: Produces detailed per-sample sequencing statistics.
 
@@ -143,7 +151,7 @@ For a large single file with `--split_n 1`, the check reads the whole file befor
 10. **MULTIQC**: Aggregates NanoStat results into a single interactive HTML report.
 
 
-<img src="assets/dorado_ont_workflow.png" alt="384-well seqWell Dorado demux ONT data Workflow" width="70%">
+<img src="assets/dorado_ont_workflow.png" alt="ConstruX-demux workflow" width="70%">
 
 
 ## Barcodes
@@ -238,7 +246,7 @@ Read **every** input file end to end before Dorado starts and list any bad ones 
 
 > These checks re-read the input, which takes a while for large files (roughly 10–17 minutes per 30 GB of `.fastq.gz`). A single file that is split is always checked by the split step, whatever these options say.
 
-Both accept `true`/`false` (also `yes`/`no`, `1`/`0`), or can be given without a value to mean `true`.
+Both are off unless given. Write --check_inputs on its own, or --check_inputs true, to switch it on; false, no and 0 switch it off; yes and 1 also mean on.
 
 ### Dorado Resources
 
@@ -289,6 +297,17 @@ Fixed memory, in GB, for **every** `DORADO_DEMUX` task. Accepts `32`, `32g`, `32
 > **Singularity / Apptainer:** the first run converts each Docker image to a `.sif` file, which needs network access and disk space (the Dorado image alone is about 10 GB); later runs reuse the cache. To share one cache between runs or users, set `NXF_SINGULARITY_CACHEDIR` (or `NXF_APPTAINER_CACHEDIR`). On a cluster, combine with your scheduler settings, e.g. `-profile singularity -c my_slurm.config`.
 
 ### Example Commands
+
+**Run the published release from GitHub** (no clone needed; `-r` pins the version):
+```bash
+nextflow run seqwell/ConstruX-demux -r v2.0.0 \
+    --data_type fastq \
+    --input /path/to/fastq_pass \
+    --outdir /path/to/output \
+    --pool_ID my_run
+```
+
+The examples below run from a local clone (`nextflow run main.nf`).
 
 > **Tip:** with `-bg` the run continues in the background and its messages are not shown in the terminal. Add `> run.log` (e.g. `nextflow run main.nf ... -bg > run.log`) and read `run.log` to see progress and any error message.
 
@@ -360,7 +379,7 @@ nextflow run main.nf \
 
 
 
-### test run Commands
+### Test Run Commands
 
 **BAM input:**
 ```bash
