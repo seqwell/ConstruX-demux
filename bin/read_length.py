@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""
+Read-length plots for one barcode, from a per-length count table.
+
+Input : <length_counts.tsv>  two tab-separated columns: read_length  count
+        (written by a single awk pass in modules/read_length.nf, so the
+        reads never have to be listed or sorted one by one)
+Output: <output.png>                     read-length histogram (100 bins)
+        <output>_weighted.png            weighted contribution (bin centre x count)
+        <output>.bin_table.txt           bin_start  bin_end  count  weighted_sum
+
+The bins, counts and plots are the same as the previous version, which
+loaded every read length individually.
+"""
 import sys
 import matplotlib
 matplotlib.use("Agg")  # headless mode for Nextflow
@@ -6,24 +19,43 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 if len(sys.argv) != 3:
-    print("Usage: leafplot.py <lengths.txt> <output.png>")
+    print("Usage: read_length.py <length_counts.tsv> <output.png>")
     sys.exit(1)
 
-length_file = sys.argv[1]
+counts_file = sys.argv[1]
 out_png = sys.argv[2]
 out_table = out_png.replace(".png", ".bin_table.txt")
 out_weighted_png = out_png.replace(".png", "_weighted.png")
 
-# Load read lengths
-with open(length_file) as f:
-    lengths = [int(line.strip()) for line in f if line.strip()]
+# Load the per-length counts (one line per distinct read length)
+lengths, counts = [], []
+with open(counts_file) as f:
+    for line in f:
+        parts = line.split()
+        if len(parts) >= 2:
+            lengths.append(int(parts[0]))
+            counts.append(int(parts[1]))
 
-# Define bins
-bins = np.linspace(min(lengths), max(lengths), 101)
+if not lengths:
+    print(f"read_length.py: no reads in {counts_file} - no plots made", file=sys.stderr)
+    sys.exit(1)
 
-# Original histogram (for counts)
+lengths = np.array(lengths)
+counts = np.array(counts)
+
+# Define bins: 100 equal bins from shortest to longest read (as before).
+# If every read has the same length, use a 1 bp-wide range instead of
+# 101 identical edges, which some numpy/matplotlib versions reject.
+lo, hi = lengths.min(), lengths.max()
+if lo == hi:
+    bins = np.linspace(lo - 0.5, hi + 0.5, 101)
+else:
+    bins = np.linspace(lo, hi, 101)
+
+# Original histogram (for counts) - weights=counts gives the same bars as
+# passing every read length individually
 plt.figure(figsize=(10,5))
-n, bin_edges, _ = plt.hist(lengths, bins=bins, color='forestgreen', alpha=0.7)
+n, bin_edges, _ = plt.hist(lengths, bins=bins, weights=counts, color='forestgreen', alpha=0.7)
 plt.title("Read Length Distribution")
 plt.xlabel("Read Length (bp)")
 plt.ylabel("Frequency")
@@ -50,4 +82,3 @@ plt.ylabel("Weighted Sum (bp * count)")
 plt.grid(axis='y', linestyle='--', alpha=0.5)
 plt.tight_layout()
 plt.savefig(out_weighted_png, dpi=300)
-

@@ -1,6 +1,0 @@
-repository_type: pipeline
-lint:
-  modules_json: false
-  module_version: false
-  nfcore_components: false
-  container_configs: false
