@@ -8,7 +8,7 @@ include { COMBINE_BARCODES_BAM } from './modules/combine_barcodes.nf'
 include { BAM_TO_FASTQ         } from './modules/bam_to_fastq.nf'
 include { EXTRACT_HEADER       } from './modules/extract_header.nf'
 include { REHEADER_READS       } from './modules/reheader_reads.nf'
-include { CUTADAPT_TRIM        } from './modules/cutadapt_trim.nf'
+include { CUTADAPT_FILTER        } from './modules/cutadapt_filter.nf'
 include { FILTER_BAM_BY_FASTQ  } from './modules/filter_bam_by_fastq.nf'
 include { DEMUX_SUMMARIZE      } from './modules/demux_summarize.nf'
 include { NANOSTAT             } from './modules/nanostat.nf'
@@ -181,7 +181,7 @@ workflow {
     DORADO_DEMUX(input_ch, barcode_fasta, arrangement_toml)
 
     // Set inside whichever branch runs, consumed by the shared QC steps
-    def trimmed_fq_ch = channel.empty()   // raw CUTADAPT_TRIM.out.fq
+    def filtered_fq_ch = channel.empty()   // raw CUTADAPT_FILTER.out.fq
     def demuxed_ch    = channel.empty()   // tuple(sample_id, trimmed_fastq)
 
 
@@ -210,13 +210,13 @@ workflow {
         // -----------------------------------------------------------
         // Step 4 (BAM): Cutadapt trim on the converted FASTQ
         // -----------------------------------------------------------
-        CUTADAPT_TRIM(BAM_TO_FASTQ.out.fastq)
-        trimmed_fq_ch = CUTADAPT_TRIM.out.fq
+        CUTADAPT_FILTER(BAM_TO_FASTQ.out.fastq)
+        filtered_fq_ch = CUTADAPT_FILTER.out.fq
 
         // trimmed_ch keyed by bare barcode ID
         // e.g. "barcode001.seqWell.fastq.gz" → key "barcode001"
         // This must match bam_barcode_ch which is also keyed by "barcode001"
-        def base_trimmed_ch = trimmed_fq_ch
+        def base_trimmed_ch = filtered_fq_ch
                                 .flatMap { fqs -> asList(fqs) }
                                 .filter { fq -> !fq.name.contains('tagged') && fq.size() > 20 }
 
@@ -273,10 +273,10 @@ workflow {
         // Step 5 (FASTQ): Cutadapt trim — on reheadered FASTQ
         //   No BAM files are created for FASTQ input.
         // -----------------------------------------------------------
-        CUTADAPT_TRIM(REHEADER_READS.out.fq)
-        trimmed_fq_ch = CUTADAPT_TRIM.out.fq
+        CUTADAPT_FILTER(REHEADER_READS.out.fq)
+        filtered_fq_ch = CUTADAPT_FILTER.out.fq
 
-        demuxed_ch = trimmed_fq_ch
+        demuxed_ch = filtered_fq_ch
                        .flatMap { fqs -> asList(fqs) }
                        .map { fq -> tuple(fq.baseName.replace('.fastq', ''), fq) }
     }
@@ -285,7 +285,7 @@ workflow {
     // ---------------------------------------------------------------
     // Step 6: Downstream QC — runs on trimmed FASTQ (both branches)
     // ---------------------------------------------------------------
-    DEMUX_SUMMARIZE(trimmed_fq_ch.collect())
+    DEMUX_SUMMARIZE(filtered_fq_ch.collect())
 
     // Warn (do not fail) when the overall demux rate looks wrong
     DEMUX_SUMMARIZE.out.subscribe { csv ->

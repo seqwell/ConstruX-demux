@@ -86,7 +86,7 @@
                     "minimum": 50
                 },
                 "error_rate": {
-                    "description": "Maximum error rate for detecting the ME and P5 adapters in CUTADAPT_TRIM step 2; reads containing either (either orientation, anywhere) are set aside as ME/P5-tagged. Errors allowed = floor(error_rate x matched adapter length): with 0.106, 2 in the 19-nt ME and 3 in the 29-nt P5.",
+                    "description": "Maximum error rate for detecting the ME and P5 adapters in CUTADAPT_FILTER step 2; reads containing either (either orientation, anywhere) are set aside as ME/P5-tagged. Errors allowed = floor(error_rate x matched adapter length): with 0.106, 2 in the 19-nt ME and 3 in the 29-nt P5.",
                     "default": 0.106,
                     "type": "number",
                     "minimum": 0,

@@ -1,4 +1,4 @@
-// CUTADAPT_TRIM
+// CUTADAPT_FILTER
 //   Step 1: length filter only (--length_filter). Dorado has already
 //           trimmed the barcode and its flanking adapter sequences.
 //   Step 2: reads that still contain a seqWell adapter (ME or P5, either
@@ -8,7 +8,7 @@
 //           barcode (crosstalk).
 // The *.ME.tagged.fastq.gz file name is kept for compatibility; it holds
 // all ME/P5-tagged reads.
-process CUTADAPT_TRIM {
+process CUTADAPT_FILTER {
     tag "${pair_id}"
     publishDir path: "${params.outdir}/demuxed_fastq_flat/", mode: 'copy', pattern: "*seqWell*"
     publishDir path: "${params.outdir}/demuxed_fastq/", mode: 'copy', saveAs: { filename ->

@@ -51,7 +51,7 @@ Every run starts with the `CHECK_INPUTS` subworkflow, then splits into two branc
                         │        ↓                                    │
                         │  BAM_TO_FASTQ  (samtools)                   │
                         │        ↓                                    │
-                        │  CUTADAPT_TRIM                              │
+                        │  CUTADAPT_FILTER                              │
                         │        ↓                                    │
                         │  FILTER_BAM_BY_FASTQ  (samtools)            │
                         │  (subset demux BAM by trimmed FASTQ IDs)    │
@@ -72,7 +72,7 @@ Every run starts with the `CHECK_INPUTS` subworkflow, then splits into two branc
                         │        ↓                                    │
                         │  REHEADER_READS (ONT metadata → SAM tags)   │
                         │        ↓                                    │
-                        │  CUTADAPT_TRIM                              │
+                        │  CUTADAPT_FILTER                              │
                         │        ↓                                    │
                         │  FASTQ outputs only (no BAM created)        │
                         └─────────────────────────────────────────────┘
@@ -120,7 +120,7 @@ For a large single file with `--split_n 1`, the check reads the whole file befor
 
 3. **BAM_TO_FASTQ**: Converts each per-barcode demuxed BAM to FASTQ using samtools. This FASTQ is used as input to Cutadapt. No header extraction step is needed for BAM input.
 
-4. **CUTADAPT_TRIM**: Two-step adapter trimming on the converted FASTQ:
+4. **CUTADAPT_FILTER**: Two-step read filtering on the converted FASTQ:
    - Step 1: Drops reads shorter than [`--length_filter`](#--length_filter). (Dorado has already trimmed the barcode and its flanking adapter sequences.)
    - Step 2: Sets aside any read that still contains a seqWell adapter, ME (Mosaic End, `AGATGTGTATAAGAGACAG`) or P5 (`AATGATACGGCGACCACCGAGATCTACAC`), in either orientation and anywhere in the read, allowing errors up to [`--error_rate`](#--error_rate). These ME/P5-tagged reads are written to `.ME.tagged.fastq.gz` (removed from final output); clean reads go to `.seqWell.fastq.gz`. Most ME/P5-tagged reads are chimeras (two library molecules joined together). In pooled plasmid and amplicon libraries, a chimera would otherwise place one sample's sequence under another sample's barcode; setting these reads aside removes this source of crosstalk.
 
@@ -136,7 +136,7 @@ For a large single file with `--split_n 1`, the check reads the whole file befor
 
 4. **REHEADER_READS**: Restores ONT header metadata as SAM-format tags in each per-barcode FASTQ, by joining on read UUID against the TSVs from EXTRACT_HEADER. Output headers look like `@<uuid> ch:i:123 rn:i:456 st:Z:... RG:Z:...`. The MinKNOW header fields are restored in SAM tag format rather than in their original `key=value` form (e.g. ch=48 becomes ch:i:48, runid=… becomes RG:Z:…). Only the 11 fields listed in bin/extract_fastq_tags.py are kept; others are dropped. Only the tags for reads in that barcode are loaded, so memory scales with the barcode's read count rather than with the whole run.
 
-5. **CUTADAPT_TRIM**: Two-step adapter trimming on the reheadered FASTQ (same logic as BAM branch). No BAM files are created for FASTQ input.
+5. **CUTADAPT_FILTER**: Two-step read filtering on the reheadered FASTQ (same logic as BAM branch). No BAM files are created for FASTQ input.
 
 ### Shared Downstream QC (Both Branches)
 
@@ -178,7 +178,7 @@ To use your own barcode set, pass `--barcodes` and `--arrangement_toml` together
 | COMBINE_BARCODES_BAM | `quay.io/biocontainers/samtools:1.21--h50ea8bc_0` |
 | EXTRACT_HEADER | `quay.io/biocontainers/pysam:0.22.0--py39hcada746_0` |
 | REHEADER_READS | `seqwell/python:v2.1` |
-| CUTADAPT_TRIM | `quay.io/biocontainers/cutadapt:5.0--py310h1fe012e_0` |
+| CUTADAPT_FILTER | `quay.io/biocontainers/cutadapt:5.0--py310h1fe012e_0` |
 | BAM_TO_FASTQ | `quay.io/biocontainers/samtools:1.21--h50ea8bc_0` |
 | FILTER_BAM_BY_FASTQ | `quay.io/biocontainers/samtools:1.21--h50ea8bc_0` |
 | DEMUX_SUMMARIZE | `ubuntu:20.04` |
@@ -226,7 +226,7 @@ Path to the barcode arrangement TOML for Dorado. Defaults to `assets/arrangement
 Minimum read length to retain after trimming. Default: `150`.
 
 #### `--error_rate`
-Maximum error rate for detecting the ME and P5 adapters in step 2 of **CUTADAPT_TRIM**. Cutadapt allows `floor(error_rate × matched adapter length)` errors (mismatches or indels), so the default `0.106` allows 2 errors in a full 19-nt ME and 3 in the full 29-nt P5. Reads with a match are set aside as ME/P5-tagged. Default: `0.106`.
+Maximum error rate for detecting the ME and P5 adapters in step 2 of **CUTADAPT_FILTER**. Cutadapt allows `floor(error_rate × matched adapter length)` errors (mismatches or indels), so the default `0.106` allows 2 errors in a full 19-nt ME and 3 in the full 29-nt P5. Reads with a match are set aside as ME/P5-tagged. Default: `0.106`.
 
 ### Optional Parameters
 
