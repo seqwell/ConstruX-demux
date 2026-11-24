@@ -15,7 +15,7 @@ Demultiplexing pipeline for seqWell ConstruX ONT libraries (plasmid and amplicon
 
 ## Intended Use
 
-ConstruX-demux demultiplexes Oxford Nanopore data from seqWell **ConstruX** libraries of **plasmids and amplicons**, barcoded with the seqWell 384 barcode set. It starts from basecalled ONT reads in FASTQ or unaligned BAM format, typically MinKNOW's `fastq_pass` / `bam_pass` folders, or the output of Dorado basecalling run separately. It has been tested with MinKNOW output. It delivers clean per-barcode reads for downstream analysis such as plasmid assembly or amplicon checks.
+ConstruX-demux demultiplexes Oxford Nanopore data from seqWell **ConstruX** libraries of **plasmids and amplicons**, barcoded with the seqWell 384 barcode set. It starts from basecalled ONT reads in FASTQ or unaligned BAM format, typically MinKNOW's `fastq_pass` / `bam_pass` folders, or the output of Dorado basecalling run separately. It has been tested with MinKNOW output. It delivers clean per-barcode reads for downstream analysis such as plasmid assembly or amplicon sequence verification.
 
 ## Summary
 
@@ -108,7 +108,7 @@ For a large single file with `--split_n 1`, the check reads the whole file befor
 
 0. **SPLIT_FASTQ / SPLIT_BAM**: Runs only when the input directory contains exactly **one** file and `--split_n` is greater than 1. The file is split into `split_n` roughly equal chunks, and each chunk becomes its own `DORADO_DEMUX` job, so demultiplexing runs in parallel. The chunks are named `<sample>.part_NNN`.
    - **SPLIT_FASTQ** uses `seqkit split2` and always writes gzipped chunks, whether the input was `.fastq` or `.fastq.gz`.
-   - **SPLIT_BAM** uses `samtools` + `awk` to distribute records round-robin across chunks. Every chunk keeps the full BAM header, and aux tags (e.g. MM/ML, RG) are preserved.
+   - **SPLIT_BAM** uses `samtools` + `awk` to assign reads to the chunks in turn (read 1 to chunk 1, read 2 to chunk 2, and so on, starting again at chunk 1 after the last chunk), so each chunk gets an equal share of the reads. Every chunk keeps the full BAM header, and aux tags (e.g. MM/ML, RG) are preserved.
 
    With multiple input files, or with `--split_n 1`, no splitting is done.
 
@@ -134,7 +134,7 @@ For a large single file with `--split_n 1`, the check reads the whole file befor
 
 3. **COMBINE_BARCODES**: Merges per-barcode FASTQ files from multiple demux directories into one gzipped FASTQ per barcode.
 
-4. **REHEADER_READS**: Restores ONT header metadata as SAM-format tags in each per-barcode FASTQ, by joining on read UUID against the TSVs from EXTRACT_HEADER. Output headers look like `@<uuid> ch:i:123 rn:i:456 st:Z:... RG:Z:...`. The original `key=value` fields are not reproduced verbatim, and fields not mapped by EXTRACT_HEADER are dropped. Only the tags for reads in that barcode are loaded, so memory scales with the barcode's read count rather than with the whole run.
+4. **REHEADER_READS**: Restores ONT header metadata as SAM-format tags in each per-barcode FASTQ, by joining on read UUID against the TSVs from EXTRACT_HEADER. Output headers look like `@<uuid> ch:i:123 rn:i:456 st:Z:... RG:Z:...`. The MinKNOW header fields are restored in SAM tag format rather than in their original `key=value` form (e.g. ch=48 becomes ch:i:48, runid=… becomes RG:Z:…). Only the 11 fields listed in bin/extract_fastq_tags.py are kept; others are dropped. Only the tags for reads in that barcode are loaded, so memory scales with the barcode's read count rather than with the whole run.
 
 5. **CUTADAPT_TRIM**: Two-step adapter trimming on the reheadered FASTQ (same logic as BAM branch). No BAM files are created for FASTQ input.
 
@@ -257,6 +257,8 @@ Both are off unless given. Write --check_inputs on its own, or --check_inputs tr
 
 Each of `--dorado_cpus` and `--dorado_mem` overrides independently. For example, setting only `--dorado_cpus` fixes the CPUs, and memory is still sized automatically.
 
+<img src="assets/dorado_cpu_memory.svg" alt="How DORADO_DEMUX CPUs and memory are decided" width="80%">
+
 #### `--large_input_gb`
 Size threshold, in GB, for automatic sizing. Default: `1`.
 
@@ -281,7 +283,7 @@ Fixed memory, in GB, for **every** `DORADO_DEMUX` task. Accepts `32`, `32g`, `32
 
 > **Note:** fixed values apply to split chunks too. With the default `--split_n 15`, `--dorado_cpus 16` requests 15 × 16 CPUs. When fixing resources for a single large file, you usually also want `--split_n 1`.
 
-> **Note:** with local execution, a task's CPUs and memory must fit on the machine (and in Docker Desktop's resource settings on macOS). On AWS Batch, the compute environment must offer an instance type large enough for the requested CPUs and memory, otherwise those tasks stay queued.
+> **Note:** with local execution, a task's CPUs and memory must fit on the machine (and in Docker Desktop's resource settings on macOS). On AWS Batch, the compute environment must offer an instance type large enough for the requested CPUs and memory. Otherwise those tasks stay in the queue (RUNNABLE) and never start; Nextflow shows no error, so the run appears to hang.
 
 ### Profiles
 
